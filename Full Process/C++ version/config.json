@@ -1,0 +1,14 @@
+{
+  "orca_path": "C:\\ORCA_6.1.1\\orca.exe",
+  "project_dir": "C:\\Projects\\Molecular Modeling\\Full Process\\C++ version",
+  "preset": "High-Level Refinement",
+  "functional": "wB97X-V",
+  "basis_set": "ma-def2-TZVPP",
+  "calc_type": "OPT",
+  "charge": 0,
+  "multiplicity": 1,
+  "ram_mb": 1000,
+  "cpus": 24,
+  "extra_keywords": "RIJCOSX TightSCF NumFreq NoSym CPCM(THF)",
+  "extra_blocks": "%geom MaxIter 300 end"
+}

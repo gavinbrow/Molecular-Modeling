@@ -1,0 +1,383 @@
+/* ═══════════════════════════════════════════════════════
+   ORCA Workflow Manager — Stylesheet
+   ═══════════════════════════════════════════════════════ */
+
+:root {
+  --primary:     #2563eb;
+  --primary-dk:  #1d4ed8;
+  --bg:          #f1f5f9;
+  --card:        #ffffff;
+  --text:        #1e293b;
+  --text-light:  #64748b;
+  --border:      #e2e8f0;
+  --success:     #16a34a;
+  --error:       #dc2626;
+  --warning:     #d97706;
+  --radius:      8px;
+  --shadow:      0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+/* ── Header ────────────────────────────────────────── */
+
+header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+header h1 {
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin: 0 0 .25rem;
+}
+.subtitle {
+  color: var(--text-light);
+  margin: 0 0 .75rem;
+}
+
+.orca-badge {
+  display: inline-block;
+  font-size: .82rem;
+  padding: .25rem .75rem;
+  border-radius: 999px;
+}
+.badge-ok  { background: #dcfce7; color: #166534; }
+.badge-err { background: #fee2e2; color: #991b1b; }
+
+/* ── Panels / Cards ────────────────────────────────── */
+
+.panel {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+.panel h2 {
+  font-size: 1.1rem;
+  margin: 0 0 1rem;
+  padding-bottom: .5rem;
+  border-bottom: 2px solid var(--primary);
+}
+
+.panels {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+.molecules-panel { flex: 3; min-width: 0; }
+.settings-panel  { flex: 2; min-width: 280px; }
+
+@media (max-width: 860px) {
+  .panels { flex-direction: column; }
+}
+
+/* ── Molecule table ────────────────────────────────── */
+
+.table-wrap { overflow-x: auto; }
+
+#mol-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+#mol-table th {
+  text-align: left;
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-light);
+  padding: .4rem .5rem;
+  border-bottom: 1px solid var(--border);
+}
+.col-name   { width: 30%; }
+.col-smiles { width: auto; }
+.col-status { width: 32px; text-align: center; }
+.col-action { width: 36px; }
+
+#mol-table td {
+  padding: .3rem .4rem;
+  vertical-align: middle;
+}
+#mol-table input[type="text"] {
+  width: 100%;
+  padding: .4rem .5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: .9rem;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  transition: border-color .15s;
+}
+#mol-table input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37,99,235,.15);
+}
+
+.smiles-indicator {
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-align: center;
+  width: 28px;
+}
+.smiles-indicator.valid   { color: var(--success); }
+.smiles-indicator.invalid { color: var(--error); }
+
+.mol-actions {
+  display: flex;
+  gap: .5rem;
+  margin-top: .75rem;
+}
+
+/* ── Form controls ─────────────────────────────────── */
+
+.form-group {
+  margin-bottom: .85rem;
+}
+.form-group label {
+  display: block;
+  font-size: .82rem;
+  font-weight: 600;
+  margin-bottom: .2rem;
+  color: var(--text-light);
+}
+.form-group input,
+.form-group select,
+.form-group textarea {
+  width: 100%;
+  padding: .45rem .6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: .9rem;
+  font-family: inherit;
+  transition: border-color .15s;
+}
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37,99,235,.15);
+}
+.form-group textarea {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  resize: vertical;
+}
+
+.form-row {
+  display: flex;
+  gap: .75rem;
+}
+.form-group.half { flex: 1; }
+
+/* ── Buttons ───────────────────────────────────────── */
+
+.btn-primary {
+  display: inline-block;
+  padding: .65rem 1.8rem;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background .15s;
+}
+.btn-primary:hover:not(:disabled) { background: var(--primary-dk); }
+.btn-primary:disabled { opacity: .55; cursor: not-allowed; }
+.btn-large { padding: .75rem 2.5rem; font-size: 1.05rem; }
+
+.btn-secondary {
+  padding: .4rem 1rem;
+  background: transparent;
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  border-radius: 4px;
+  font-size: .85rem;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.btn-secondary:hover { background: var(--primary); color: #fff; }
+
+.btn-icon {
+  background: none;
+  border: none;
+  font-size: 1.3rem;
+  color: var(--text-light);
+  cursor: pointer;
+  padding: 0 .25rem;
+  line-height: 1;
+}
+.btn-icon:hover { color: var(--error); }
+
+.actions-bar {
+  text-align: center;
+  margin: 1.5rem 0;
+}
+
+/* ── Modal ─────────────────────────────────────────── */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal-content {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  width: 90%;
+  max-width: 520px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.18);
+}
+.modal-content h3 { margin: 0 0 .5rem; }
+.modal-content .hint {
+  font-size: .82rem;
+  color: var(--text-light);
+  margin: 0 0 .75rem;
+}
+.modal-content textarea {
+  width: 100%;
+  padding: .6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: .9rem;
+  resize: vertical;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: .5rem;
+  margin-top: .75rem;
+}
+
+/* ── Progress ──────────────────────────────────────── */
+
+.progress-track {
+  height: 10px;
+  background: #e2e8f0;
+  border-radius: 99px;
+  overflow: hidden;
+  margin-bottom: .5rem;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 99px;
+  transition: width .4s ease;
+}
+.progress-label {
+  font-size: .9rem;
+  color: var(--text-light);
+  margin: 0 0 .75rem;
+}
+
+.mol-status-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.mol-status-list li {
+  padding: .3rem 0;
+  font-size: .9rem;
+  border-bottom: 1px solid var(--border);
+}
+.mol-status-list li:last-child { border: none; }
+.smiles-hint {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  color: var(--text-light);
+  font-size: .82rem;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+.dot-pending { background: #cbd5e1; }
+.dot-running { background: var(--primary); }
+.dot-ok      { background: var(--success); }
+.dot-warn    { background: var(--warning); }
+.dot-err     { background: var(--error); }
+
+.pulse {
+  animation: pulse-anim 1s ease-in-out infinite;
+}
+@keyframes pulse-anim {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .35; }
+}
+
+.text-err  { color: var(--error); font-weight: 600; }
+.text-ok   { color: var(--success); font-weight: 600; }
+.text-warn { color: var(--warning); font-weight: 600; }
+
+/* ── Results table ─────────────────────────────────── */
+
+.results-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.results-table th {
+  text-align: left;
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: #fff;
+  background: #1e3a5f;
+  padding: .55rem .6rem;
+}
+.results-table td {
+  padding: .5rem .6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  font-size: .9rem;
+}
+.results-table tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+.img-cell img {
+  max-width: 130px;
+  max-height: 100px;
+  border-radius: 4px;
+  background: #fff;
+}
+.smiles-cell {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: .82rem;
+  color: var(--text-light);
+  max-width: 200px;
+  word-break: break-all;
+}
+.num {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: .88rem;
+}
+.err-cell {
+  color: var(--error);
+  font-size: .82rem;
+  max-width: 200px;
+}

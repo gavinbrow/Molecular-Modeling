@@ -1,0 +1,6 @@
+flask
+rdkit-pypi
+openpyxl
+Pillow
+PySide6
+pyinstaller

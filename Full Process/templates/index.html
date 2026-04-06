@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ORCA Workflow Manager</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+
+    <!-- ── Header ────────────────────────────────────── -->
+    <header>
+      <h1>ORCA Workflow Manager</h1>
+      <p class="subtitle">SMILES &rarr; Force-Field Optimisation &rarr; ORCA Calculation &rarr; Excel Report</p>
+      <div id="orca-status" class="orca-badge"></div>
+    </header>
+
+    <!-- ── Main form area ────────────────────────────── -->
+    <main>
+      <div class="panels">
+
+        <!-- Left: Molecules -->
+        <section class="panel molecules-panel">
+          <h2>Molecules</h2>
+          <div class="table-wrap">
+            <table id="mol-table">
+              <thead>
+                <tr>
+                  <th class="col-name">Name</th>
+                  <th class="col-smiles">SMILES</th>
+                  <th class="col-status"></th>
+                  <th class="col-action"></th>
+                </tr>
+              </thead>
+              <tbody id="mol-body">
+                <tr>
+                  <td><input type="text" class="mol-name" placeholder="water" spellcheck="false"></td>
+                  <td><input type="text" class="mol-smiles" placeholder="O" spellcheck="false"></td>
+                  <td class="smiles-indicator"></td>
+                  <td><button class="btn-icon btn-remove" title="Remove">&times;</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="mol-actions">
+            <button class="btn-secondary" id="btn-add-row">+ Add Molecule</button>
+            <button class="btn-secondary" id="btn-bulk">Paste Bulk</button>
+          </div>
+          <!-- Bulk-paste modal -->
+          <div id="bulk-modal" class="modal" style="display:none">
+            <div class="modal-content">
+              <h3>Paste Molecules</h3>
+              <p class="hint">One per line. Format: <code>name, SMILES</code> &mdash; or just SMILES (names auto-generated).</p>
+              <textarea id="bulk-text" rows="10" placeholder="water, O&#10;ethanol, CCO&#10;c1ccccc1"></textarea>
+              <div class="modal-actions">
+                <button class="btn-secondary" id="btn-bulk-cancel">Cancel</button>
+                <button class="btn-primary" id="btn-bulk-import">Import</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Right: Settings -->
+        <section class="panel settings-panel">
+          <h2>Calculation Settings</h2>
+
+          <div class="form-group">
+            <label for="inp-func">Functional</label>
+            <input id="inp-func" type="text" value="B3LYP" list="dl-func" spellcheck="false">
+            <datalist id="dl-func">
+              <option value="B3LYP">
+              <option value="PBE">
+              <option value="PBE0">
+              <option value="M06-2X">
+              <option value="wB97X-D3">
+              <option value="wB97M-D3BJ">
+              <option value="TPSS">
+              <option value="BP86">
+              <option value="HF">
+              <option value="MP2">
+              <option value="RI-MP2">
+              <option value="DLPNO-CCSD(T)">
+            </datalist>
+          </div>
+
+          <div class="form-group">
+            <label for="inp-basis">Basis Set</label>
+            <input id="inp-basis" type="text" value="def2-SVP" list="dl-basis" spellcheck="false">
+            <datalist id="dl-basis">
+              <option value="def2-SVP">
+              <option value="def2-TZVP">
+              <option value="def2-TZVPP">
+              <option value="def2-QZVPP">
+              <option value="6-31G*">
+              <option value="6-31+G(d,p)">
+              <option value="6-311+G(d,p)">
+              <option value="cc-pVDZ">
+              <option value="cc-pVTZ">
+              <option value="aug-cc-pVDZ">
+              <option value="aug-cc-pVTZ">
+            </datalist>
+          </div>
+
+          <div class="form-group">
+            <label for="inp-calc">Calculation Type</label>
+            <select id="inp-calc">
+              <option value="OPT FREQ">Optimisation + Frequency</option>
+              <option value="OPT">Geometry Optimisation</option>
+              <option value="FREQ">Frequency Analysis</option>
+              <option value="SP">Single Point Energy</option>
+              <option value="OPTTS FREQ">TS Optimisation + Frequency</option>
+              <option value="OPTTS">TS Optimisation</option>
+            </select>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group half">
+              <label for="inp-charge">Charge</label>
+              <input id="inp-charge" type="number" value="0">
+            </div>
+            <div class="form-group half">
+              <label for="inp-mult">Multiplicity</label>
+              <input id="inp-mult" type="number" value="1" min="1">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group half">
+              <label for="inp-ram">RAM / Core (MB)</label>
+              <input id="inp-ram" type="number" value="4000" min="256" step="256">
+            </div>
+            <div class="form-group half">
+              <label for="inp-cpus">CPU Cores</label>
+              <input id="inp-cpus" type="number" value="4" min="1" max="128">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="inp-extra-kw">Extra Keywords</label>
+            <input id="inp-extra-kw" type="text" placeholder="e.g. D3BJ CPCM(water) TightSCF" spellcheck="false">
+          </div>
+
+          <div class="form-group">
+            <label for="inp-extra-blocks">Extra Blocks</label>
+            <textarea id="inp-extra-blocks" rows="3" placeholder="%scf&#10;  MaxIter 300&#10;end" spellcheck="false"></textarea>
+          </div>
+        </section>
+      </div>
+
+      <!-- Submit -->
+      <div class="actions-bar">
+        <button id="btn-submit" class="btn-primary btn-large">Run Calculations</button>
+      </div>
+
+      <!-- ── Progress ────────────────────────────────── -->
+      <section id="sec-progress" class="panel" style="display:none">
+        <h2>Progress</h2>
+        <div class="progress-track">
+          <div id="progress-bar" class="progress-fill" style="width:0%"></div>
+        </div>
+        <p id="progress-text" class="progress-label">Starting...</p>
+        <ul id="progress-molecules" class="mol-status-list"></ul>
+      </section>
+
+      <!-- ── Results ─────────────────────────────────── -->
+      <section id="sec-results" class="panel" style="display:none">
+        <h2>Results</h2>
+        <div id="results-body"></div>
+        <div class="actions-bar" style="margin-top:1rem">
+          <a id="btn-download" href="#" class="btn-primary btn-large" style="display:none">Download Excel Report</a>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <!--  JavaScript                                         -->
+  <!-- ═══════════════════════════════════════════════════ -->
+  <script>
+    // ── State ──────────────────────────────────────────
+    let currentJobId = null;
+    let pollTimer = null;
+
+    // ── DOM refs ───────────────────────────────────────
+    const molBody = document.getElementById('mol-body');
+    const btnAdd = document.getElementById('btn-add-row');
+    const btnBulk = document.getElementById('btn-bulk');
+    const bulkModal = document.getElementById('bulk-modal');
+    const btnBulkCancel = document.getElementById('btn-bulk-cancel');
+    const btnBulkImport = document.getElementById('btn-bulk-import');
+    const bulkText = document.getElementById('bulk-text');
+    const btnSubmit = document.getElementById('btn-submit');
+    const secProgress = document.getElementById('sec-progress');
+    const progressBar = document.getElementById('progress-bar');
+    const progressText = document.getElementById('progress-text');
+    const progressMolecules = document.getElementById('progress-molecules');
+    const secResults = document.getElementById('sec-results');
+    const resultsBody = document.getElementById('results-body');
+    const btnDownload = document.getElementById('btn-download');
+
+    // ── ORCA availability check ────────────────────────
+    fetch('/api/orca_check').then(r => r.json()).then(d => {
+      const el = document.getElementById('orca-status');
+      if (d.available) {
+        el.textContent = 'ORCA found: ' + d.path;
+        el.classList.add('badge-ok');
+      } else {
+        el.textContent = 'ORCA not found at: ' + d.path;
+        el.classList.add('badge-err');
+      }
+    });
+
+    // ── Molecule table ─────────────────────────────────
+    function createRow(name, smiles) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><input type="text" class="mol-name" placeholder="molecule" value="${esc(name || '')}" spellcheck="false"></td>
+        <td><input type="text" class="mol-smiles" placeholder="SMILES" value="${esc(smiles || '')}" spellcheck="false"></td>
+        <td class="smiles-indicator"></td>
+        <td><button class="btn-icon btn-remove" title="Remove">&times;</button></td>`;
+      return tr;
+    }
+
+    function esc(s) {
+      return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    btnAdd.addEventListener('click', () => {
+      molBody.appendChild(createRow('', ''));
+      molBody.lastElementChild.querySelector('.mol-name').focus();
+    });
+
+    // Remove row
+    molBody.addEventListener('click', e => {
+      if (e.target.classList.contains('btn-remove')) {
+        const tr = e.target.closest('tr');
+        if (molBody.children.length > 1) tr.remove();
+      }
+    });
+
+    // Live SMILES validation on blur
+    molBody.addEventListener('focusout', e => {
+      if (!e.target.classList.contains('mol-smiles')) return;
+      const smiles = e.target.value.trim();
+      const indicator = e.target.closest('tr').querySelector('.smiles-indicator');
+      if (!smiles) { indicator.textContent = ''; indicator.className = 'smiles-indicator'; return; }
+      fetch('/api/validate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({molecules: [{name: '', smiles}]})
+      })
+      .then(r => r.json())
+      .then(d => {
+        if (d.results[0].valid) {
+          indicator.textContent = '\u2713';
+          indicator.className = 'smiles-indicator valid';
+        } else {
+          indicator.textContent = '\u2717';
+          indicator.className = 'smiles-indicator invalid';
+        }
+      });
+    });
+
+    // ── Bulk import ────────────────────────────────────
+    btnBulk.addEventListener('click', () => { bulkModal.style.display = 'flex'; bulkText.focus(); });
+    btnBulkCancel.addEventListener('click', () => { bulkModal.style.display = 'none'; });
+    bulkModal.addEventListener('click', e => { if (e.target === bulkModal) bulkModal.style.display = 'none'; });
+
+    btnBulkImport.addEventListener('click', () => {
+      const lines = bulkText.value.split('\n').map(l => l.trim()).filter(Boolean);
+      let idx = molBody.children.length;
+      for (const line of lines) {
+        let name = '', smiles = '';
+        // Try "name, smiles" or "name\tsmiles"
+        const sep = line.includes(',') ? ',' : line.includes('\t') ? '\t' : null;
+        if (sep) {
+          const parts = line.split(sep).map(p => p.trim());
+          name = parts[0]; smiles = parts.slice(1).join('').trim();
+        } else {
+          smiles = line; name = 'mol_' + (++idx);
+        }
+        molBody.appendChild(createRow(name, smiles));
+      }
+      // Remove the first empty row if it exists
+      const firstRow = molBody.children[0];
+      if (firstRow) {
+        const fn = firstRow.querySelector('.mol-name').value.trim();
+        const fs = firstRow.querySelector('.mol-smiles').value.trim();
+        if (!fn && !fs && molBody.children.length > 1) firstRow.remove();
+      }
+      bulkModal.style.display = 'none';
+      bulkText.value = '';
+    });
+
+    // ── Collect form data ──────────────────────────────
+    function collectData() {
+      const molecules = [];
+      for (const tr of molBody.children) {
+        const name = tr.querySelector('.mol-name').value.trim();
+        const smiles = tr.querySelector('.mol-smiles').value.trim();
+        if (smiles) molecules.push({name: name || null, smiles});
+      }
+      const settings = {
+        functional:     document.getElementById('inp-func').value.trim(),
+        basis_set:      document.getElementById('inp-basis').value.trim(),
+        calc_type:      document.getElementById('inp-calc').value,
+        charge:         parseInt(document.getElementById('inp-charge').value) || 0,
+        multiplicity:   parseInt(document.getElementById('inp-mult').value) || 1,
+        ram_mb:         parseInt(document.getElementById('inp-ram').value) || 4000,
+        cpus:           parseInt(document.getElementById('inp-cpus').value) || 4,
+        extra_keywords: document.getElementById('inp-extra-kw').value.trim(),
+        extra_blocks:   document.getElementById('inp-extra-blocks').value.trim(),
+      };
+      return {molecules, settings};
+    }
+
+    // ── Submit ─────────────────────────────────────────
+    btnSubmit.addEventListener('click', () => {
+      const data = collectData();
+      if (data.molecules.length === 0) { alert('Add at least one molecule with a SMILES string.'); return; }
+
+      btnSubmit.disabled = true;
+      btnSubmit.textContent = 'Submitting...';
+      secResults.style.display = 'none';
+
+      fetch('/api/submit', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+      })
+      .then(r => r.json().then(d => ({ok: r.ok, data: d})))
+      .then(({ok, data: d}) => {
+        if (!ok) { alert(d.error || 'Submission failed.'); btnSubmit.disabled = false; btnSubmit.textContent = 'Run Calculations'; return; }
+        currentJobId = d.job_id;
+        secProgress.style.display = '';
+        progressBar.style.width = '0%';
+        progressText.textContent = 'Starting...';
+        progressMolecules.innerHTML = '';
+        pollTimer = setInterval(() => pollStatus(d.job_id), 2000);
+      })
+      .catch(err => { alert('Network error: ' + err); btnSubmit.disabled = false; btnSubmit.textContent = 'Run Calculations'; });
+    });
+
+    // ── Poll status ────────────────────────────────────
+    function pollStatus(jobId) {
+      fetch('/api/status/' + jobId)
+        .then(r => r.json())
+        .then(d => {
+          updateProgress(d, jobId);
+          if (d.status !== 'running') {
+            clearInterval(pollTimer);
+            pollTimer = null;
+            btnSubmit.disabled = false;
+            btnSubmit.textContent = 'Run Calculations';
+            if (d.status === 'completed') showResults(d, jobId);
+            else if (d.status === 'failed') {
+              progressText.textContent = 'Pipeline failed: ' + (d.error || 'unknown error');
+              progressText.classList.add('text-err');
+            }
+          }
+        });
+    }
+
+    function updateProgress(d, jobId) {
+      const pct = d.total > 0 ? Math.round((d.current / d.total) * 100) : 0;
+      progressBar.style.width = pct + '%';
+
+      const phaseLabel = {geometry: 'Generating geometries', orca: 'Running ORCA', report: 'Building report', done: 'Done'}[d.phase] || d.phase;
+      progressText.textContent = `${phaseLabel} - ${d.current}/${d.total} (${d.current_name}) - Elapsed: ${d.elapsed}`;
+      progressText.classList.remove('text-err');
+
+      // Per-molecule status list
+      let html = '';
+      for (const m of d.molecules) {
+        const icon = {
+          pending: '<span class="status-dot dot-pending"></span>',
+          generating: '<span class="status-dot dot-running"></span>',
+          generated: '<span class="status-dot dot-ok"></span>',
+          running: '<span class="status-dot dot-running pulse"></span>',
+          completed: '<span class="status-dot dot-ok"></span>',
+          warning: '<span class="status-dot dot-warn"></span>',
+          error: '<span class="status-dot dot-err"></span>',
+        }[m.status] || '';
+        const extra = m.gibbs != null ? ` (G = ${m.gibbs.toFixed(6)} Eh)` : '';
+        const errMsg = m.error ? ` - ${m.error}` : '';
+        html += `<li>${icon} <strong>${esc(m.name)}</strong> <span class="smiles-hint">${esc(m.smiles)}</span>${extra}${errMsg}</li>`;
+      }
+      progressMolecules.innerHTML = html;
+    }
+
+    // ── Show results ───────────────────────────────────
+    function showResults(d, jobId) {
+      secResults.style.display = '';
+
+      let rows = '';
+      for (const m of d.molecules) {
+        const imgSrc = `/api/image/${jobId}/${encodeURIComponent(m.name)}`;
+        const statusCls = m.status === 'completed' ? 'text-ok' : m.status === 'error' ? 'text-err' : 'text-warn';
+        const gibbsStr = m.gibbs != null ? m.gibbs.toFixed(8) + ' Eh' : '-';
+        rows += `<tr>
+          <td class="img-cell"><img src="${imgSrc}" alt="${esc(m.name)}" onerror="this.style.display='none'"></td>
+          <td>${esc(m.name)}</td>
+          <td class="smiles-cell">${esc(m.smiles)}</td>
+          <td class="${statusCls}">${m.status.toUpperCase()}</td>
+          <td class="num">${gibbsStr}</td>
+          <td class="err-cell">${m.error ? esc(m.error) : ''}</td>
+        </tr>`;
+      }
+
+      resultsBody.innerHTML = `<table class="results-table">
+        <thead><tr>
+          <th>Structure</th><th>Name</th><th>SMILES</th><th>Status</th><th>Gibbs Free Energy</th><th>Errors</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+
+      if (d.report_path) {
+        btnDownload.href = '/api/download/' + jobId;
+        btnDownload.style.display = '';
+      }
+    }
+  </script>
+</body>
+</html>

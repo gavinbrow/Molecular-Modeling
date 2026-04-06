@@ -1,0 +1,4 @@
+flask
+rdkit-pypi
+openpyxl
+Pillow

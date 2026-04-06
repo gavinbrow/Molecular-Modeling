@@ -1,0 +1,18 @@
+! wB97X-V ma-def2-TZVPP RIJCOSX TightSCF Opt NumFreq NoSym CPCM(THF)
+
+%pal
+   nprocs 24
+   nprocs_group 24
+end
+
+%maxcore 1000
+
+%geom
+   MaxIter 300
+end
+
+* xyz 0 1
+O          0.96863       -0.06199        0.04821
+H          1.93652       -0.09864        0.07671
+H          0.68979       -0.79456        0.61790
+*

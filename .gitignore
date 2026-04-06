@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Virtual environments
+build_venv/
+venv/
+.venv/
+
+# ORCA output/intermediate files (large/generated)
+MID/
+OUT/
+*.gbw
+*.densities
+*.densitiesinfo
+*.bibtex
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
