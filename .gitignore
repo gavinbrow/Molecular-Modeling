@@ -15,7 +15,6 @@ venv/
 
 # ORCA output/intermediate files (large/generated)
 MID/
-OUT/
 *.gbw
 *.densities
 *.densitiesinfo
