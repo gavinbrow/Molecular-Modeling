@@ -1,6 +1,8 @@
-flask
-rdkit-pypi
+rdkit
 openpyxl
 Pillow
 PySide6
 pyinstaller
+pyqtgraph
+PyOpenGL
+numpy

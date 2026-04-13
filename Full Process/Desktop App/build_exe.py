@@ -60,10 +60,18 @@ def main():
         "--collect-all", "rdkit",
         # PySide6 plugins and resources
         "--collect-all", "PySide6",
+        # pyqtgraph + OpenGL for 3D molecular viewer
+        "--collect-all", "pyqtgraph",
+        "--collect-all", "OpenGL",
         # Hidden imports that PyInstaller's analysis may miss
         "--hidden-import", "openpyxl",
         "--hidden-import", "PIL",
         "--hidden-import", "PIL.Image",
+        "--hidden-import", "pyqtgraph.opengl",
+        "--hidden-import", "OpenGL.platform.win32",
+        "--hidden-import", "OpenGL.GL",
+        "--hidden-import", "OpenGL.GLU",
+        "--hidden-import", "numpy",
     ]
 
     # Exclude heavy packages pulled in transitively but never used

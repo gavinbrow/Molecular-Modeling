@@ -29,6 +29,7 @@
                 <tr>
                   <th class="col-name">Name</th>
                   <th class="col-smiles">SMILES</th>
+                  <th class="col-goat" title="GOAT global conformer search">GOAT</th>
                   <th class="col-status"></th>
                   <th class="col-action"></th>
                 </tr>
@@ -37,6 +38,7 @@
                 <tr>
                   <td><input type="text" class="mol-name" placeholder="water" spellcheck="false"></td>
                   <td><input type="text" class="mol-smiles" placeholder="O" spellcheck="false"></td>
+                  <td class="goat-cell"><input type="checkbox" class="mol-goat" title="Run GOAT conformer search for this molecule"></td>
                   <td class="smiles-indicator"></td>
                   <td><button class="btn-icon btn-remove" title="Remove">&times;</button></td>
                 </tr>
@@ -145,6 +147,7 @@
             <label for="inp-extra-blocks">Extra Blocks</label>
             <textarea id="inp-extra-blocks" rows="3" placeholder="%scf&#10;  MaxIter 300&#10;end" spellcheck="false"></textarea>
           </div>
+
         </section>
       </div>
 
@@ -217,6 +220,7 @@
       tr.innerHTML = `
         <td><input type="text" class="mol-name" placeholder="molecule" value="${esc(name || '')}" spellcheck="false"></td>
         <td><input type="text" class="mol-smiles" placeholder="SMILES" value="${esc(smiles || '')}" spellcheck="false"></td>
+        <td class="goat-cell"><input type="checkbox" class="mol-goat" title="Run GOAT conformer search for this molecule"></td>
         <td class="smiles-indicator"></td>
         <td><button class="btn-icon btn-remove" title="Remove">&times;</button></td>`;
       return tr;
@@ -299,7 +303,8 @@
       for (const tr of molBody.children) {
         const name = tr.querySelector('.mol-name').value.trim();
         const smiles = tr.querySelector('.mol-smiles').value.trim();
-        if (smiles) molecules.push({name: name || null, smiles});
+        const goat = tr.querySelector('.mol-goat')?.checked || false;
+        if (smiles) molecules.push({name: name || null, smiles, goat});
       }
       const settings = {
         functional:     document.getElementById('inp-func').value.trim(),
@@ -366,7 +371,7 @@
       const pct = d.total > 0 ? Math.round((d.current / d.total) * 100) : 0;
       progressBar.style.width = pct + '%';
 
-      const phaseLabel = {geometry: 'Generating geometries', orca: 'Running ORCA', report: 'Building report', done: 'Done'}[d.phase] || d.phase;
+      const phaseLabel = {geometry: 'Generating geometries', goat: 'Running GOAT conformer search', orca: 'Running ORCA', report: 'Building report', done: 'Done'}[d.phase] || d.phase;
       progressText.textContent = `${phaseLabel} - ${d.current}/${d.total} (${d.current_name}) - Elapsed: ${d.elapsed}`;
       progressText.classList.remove('text-err');
 
@@ -377,6 +382,7 @@
           pending: '<span class="status-dot dot-pending"></span>',
           generating: '<span class="status-dot dot-running"></span>',
           generated: '<span class="status-dot dot-ok"></span>',
+          goat: '<span class="status-dot dot-running pulse"></span>',
           running: '<span class="status-dot dot-running pulse"></span>',
           completed: '<span class="status-dot dot-ok"></span>',
           warning: '<span class="status-dot dot-warn"></span>',

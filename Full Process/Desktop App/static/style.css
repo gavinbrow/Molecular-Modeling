@@ -105,8 +105,10 @@ header h1 {
 }
 .col-name   { width: 30%; }
 .col-smiles { width: auto; }
+.col-goat   { width: 46px; text-align: center; }
 .col-status { width: 32px; text-align: center; }
 .col-action { width: 36px; }
+.goat-cell  { text-align: center; }
 
 #mol-table td {
   padding: .3rem .4rem;

@@ -35,6 +35,7 @@ try:
         QHeaderView, QAbstractItemView, QScrollArea, QDialog,
         QDialogButtonBox, QMessageBox, QSizePolicy, QFrame,
         QGridLayout, QStyleFactory, QFileDialog, QInputDialog,
+        QStackedWidget, QCheckBox,
     )
     from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl
     from PySide6.QtGui import QPixmap, QFont, QColor, QDesktopServices, QIcon
@@ -46,7 +47,19 @@ from pipeline import (
     ORCA_EXE, INP_DIR, OUT_DIR, MID_DIR,
     validate_smiles, smiles_to_xyz, generate_inp,
     make_run_stamp, run_orca_job, parse_out_file, build_report, fmt_hhmmss,
+    smiles_to_mol3d, ff_optimize_mol, mol_to_xyz_block,
+    run_goat_job,
 )
+
+from viewer3d import Molecule3DViewer, HAS_3D_VIEWER
+
+
+class NoScrollComboBox(QComboBox):
+    """QComboBox that ignores scroll-wheel events so the value doesn't
+    change accidentally when the user scrolls the page."""
+
+    def wheelEvent(self, ev):
+        ev.ignore()
 
 
 # ── Windows sleep prevention ──────────────────────────────────────────
@@ -73,7 +86,11 @@ else:
 
 # ── Configuration persistence ───────────────────────────────────────────
 
-ROOT = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False):
+    # Running as PyInstaller exe — use the directory containing the exe
+    ROOT = Path(sys.executable).resolve().parent
+else:
+    ROOT = Path(__file__).resolve().parent
 
 
 def _find_app_icon() -> str | None:
@@ -292,6 +309,23 @@ QPushButton#queueBtn {
 }
 QPushButton#queueBtn:hover { background: #15803d; }
 
+QPushButton#preOptBtn {
+    background: #7c3aed; color: white; border: none;
+    border-radius: 8px; padding: 12px 36px;
+    font-size: 14px; font-weight: bold;
+}
+QPushButton#preOptBtn:hover   { background: #6d28d9; }
+QPushButton#preOptBtn:pressed { background: #5b21b6; }
+QPushButton#preOptBtn:disabled { background: #475569; color: #64748b; }
+
+QPushButton#view3dBtn {
+    background: transparent; color: #a78bfa; border: none;
+    font-size: 12px; font-weight: bold;
+    min-width: 30px; max-width: 30px;
+    padding: 0;
+}
+QPushButton#view3dBtn:hover { color: #c4b5fd; }
+
 QPushButton#removeBtn {
     background: transparent; color: #64748b; border: none;
     font-size: 15px; font-weight: bold;
@@ -339,7 +373,20 @@ QLineEdit, QComboBox, QSpinBox {
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
     border-color: #3b82f6;
 }
-QComboBox::drop-down { border: none; }
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 24px;
+    border-left: 1px solid #334155;
+    background: #1e293b;
+}
+QComboBox::down-arrow {
+    image: none;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #94a3b8;
+    margin-top: 2px;
+}
 QComboBox QAbstractItemView {
     background: #1e293b; color: #e2e8f0;
     border: 1px solid #334155;
@@ -471,7 +518,7 @@ class MoleculeSettingsDialog(QDialog):
 
         # Functional
         g.addWidget(_form_label("Functional"), row, 0)
-        self.func_combo = QComboBox()
+        self.func_combo = NoScrollComboBox()
         self.func_combo.setEditable(True)
         self.func_combo.addItems([
             "B3LYP", "PBE", "PBE0", "M06-2X", "wB97X-D3",
@@ -483,7 +530,7 @@ class MoleculeSettingsDialog(QDialog):
         # Basis Set
         row += 1
         g.addWidget(_form_label("Basis Set"), row, 0)
-        self.basis_combo = QComboBox()
+        self.basis_combo = NoScrollComboBox()
         self.basis_combo.setEditable(True)
         self.basis_combo.addItems([
             "def2-SVP", "def2-TZVP", "def2-TZVPP", "def2-QZVPP",
@@ -495,7 +542,7 @@ class MoleculeSettingsDialog(QDialog):
         # Calculation Type
         row += 1
         g.addWidget(_form_label("Calculation Type"), row, 0)
-        self.calc_combo = QComboBox()
+        self.calc_combo = NoScrollComboBox()
         for label, value in [
             ("Optimisation + Frequency", "OPT FREQ"),
             ("Geometry Optimisation", "OPT"),
@@ -503,6 +550,7 @@ class MoleculeSettingsDialog(QDialog):
             ("Single Point Energy", "SP"),
             ("TS Optimisation + Frequency", "OPTTS FREQ"),
             ("TS Optimisation", "OPTTS"),
+            ("Manual (none)", ""),
         ]:
             self.calc_combo.addItem(label, value)
         g.addWidget(self.calc_combo, row, 1, 1, 3)
@@ -595,7 +643,7 @@ class MoleculeSettingsDialog(QDialog):
         return {
             "functional": self.func_combo.currentText().strip(),
             "basis_set": self.basis_combo.currentText().strip(),
-            "calc_type": self.calc_combo.currentData() or "OPT FREQ",
+            "calc_type": self.calc_combo.currentData() if self.calc_combo.currentData() is not None else "OPT FREQ",
             "charge": self.charge_spin.value(),
             "multiplicity": self.mult_spin.value(),
             "ram_mb": self.ram_spin.value(),
@@ -625,6 +673,7 @@ class PipelineWorker(QThread):
         orca_path: Path,
         project_dir: Path,
         abort_event: threading.Event,
+        preopt_data: dict | None = None,
     ):
         super().__init__()
         self.molecules = molecules
@@ -634,6 +683,7 @@ class PipelineWorker(QThread):
         self.orca_path = Path(orca_path)
         self.project_dir = Path(project_dir)
         self.abort_event = abort_event
+        self.preopt_data = preopt_data or {}  # {mol_name: {"xyz_block":str, "png_bytes":bytes}}
         self.png_data: dict[str, bytes] = {}
         self._wall_start: float = 0.0
 
@@ -695,7 +745,13 @@ class PipelineWorker(QThread):
                 job["molecules"][processed]["status"] = "generating"
 
                 try:
-                    xyz_block, png_bytes, _ = smiles_to_xyz(smiles)
+                    # Use pre-generated coordinates if available
+                    pre = self.preopt_data.get(name)
+                    if pre:
+                        xyz_block = pre["xyz_block"]
+                        png_bytes = pre["png_bytes"]
+                    else:
+                        xyz_block, png_bytes, _ = smiles_to_xyz(smiles)
                     inp_content = generate_inp(name, xyz_block, settings)
 
                     inp_path = inp_dir / f"{name}.inp"
@@ -721,6 +777,46 @@ class PipelineWorker(QThread):
                     job["status"] = "aborted"
                     job["phase"] = "aborted"
                     break
+
+                # ── Phase: GOAT (optional, per-molecule) ──
+                if mol.get("goat", False):
+                    job["phase"] = "goat"
+                    job["current_name"] = name
+                    job["elapsed"] = fmt_hhmmss(time.monotonic() - self._wall_start)
+                    job["molecules"][processed]["status"] = "goat"
+
+                    mol_out_dir = out_run / name
+                    mol_out_dir.mkdir(parents=True, exist_ok=True)
+                    env = os.environ.copy()
+
+                    goat_xyz, goat_warn = run_goat_job(
+                        name, xyz_block, settings,
+                        job_dir=mol_out_dir,
+                        env=env,
+                        status_dict=job,
+                        pipeline_start=self._wall_start,
+                        orca_exe=self.orca_path,
+                        abort_event=self.abort_event,
+                    )
+                    job["elapsed"] = fmt_hhmmss(time.monotonic() - self._wall_start)
+
+                    if self.abort_event.is_set():
+                        job["molecules"][processed]["status"] = "aborted"
+                        job["molecules"][processed]["error"] = "Aborted by user"
+                        job["status"] = "aborted"
+                        job["phase"] = "aborted"
+                        break
+
+                    if goat_xyz is not None:
+                        # Rebuild the DFT input using GOAT global-minimum geometry
+                        xyz_block = goat_xyz
+                        inp_content = generate_inp(name, xyz_block, settings)
+                        inp_path = inp_dir / f"{name}.inp"
+                        inp_path.write_text(inp_content, encoding="utf-8")
+                        inp_paths[name] = inp_path
+                    elif goat_warn:
+                        # GOAT failed — fall back to RDKit geometry (already in inp)
+                        job["molecules"][processed]["error"] = goat_warn
 
                 # ── Phase: ORCA ──
                 job["phase"] = "orca"
@@ -810,6 +906,8 @@ class MainWindow(QMainWindow):
 
         self._updating = False
         self._applying_preset = False
+        self._updating_preview = False
+        self._updating_from_preview = False
         self._preset_nprocs_group: int | None = None
         self.job_status: dict | None = None
         self.worker: PipelineWorker | None = None
@@ -820,6 +918,11 @@ class MainWindow(QMainWindow):
 
         # Per-molecule settings: {row_index: settings_dict or None}
         self._mol_settings: dict[int, dict | None] = {}
+
+        # Per-molecule pre-optimisation data:
+        # {row_index: {"mol_3d": rdkit.Mol, "xyz_block": str, "png_bytes": bytes}}
+        self._mol_preopt: dict[int, dict] = {}
+        self._viewing_3d_row: int = -1  # row being viewed in 3D editor
 
         self.config = load_config()
 
@@ -857,17 +960,43 @@ class MainWindow(QMainWindow):
         panels = QHBoxLayout()
         panels.setSpacing(16)
         panels.addWidget(self._build_molecules_panel(), stretch=3)
-        panels.addWidget(self._build_settings_panel(), stretch=2)
+
+        # Right panel: settings ↔ 3D viewer (stacked)
+        self.right_stack = QStackedWidget()
+        self.settings_panel = self._build_settings_panel()
+        self.right_stack.addWidget(self.settings_panel)
+        if HAS_3D_VIEWER:
+            self.viewer_3d = Molecule3DViewer()
+            self.viewer_3d.viewerClosed.connect(self._on_3d_viewer_closed)
+            self.viewer_3d.preOptimized.connect(self._on_3d_preopt_done)
+            self.viewer_3d.conformerSearchDone.connect(self._on_3d_preopt_done)
+            self.right_stack.addWidget(self.viewer_3d)
+        else:
+            self.viewer_3d = None
+        panels.addWidget(self.right_stack, stretch=2)
         root.addLayout(panels)
 
-        # Run / Stop buttons row
+        # Pre-optimise / Run / Stop buttons row
         btn_row = QHBoxLayout()
         btn_row.setAlignment(Qt.AlignCenter)
         btn_row.setSpacing(12)
 
+        self.preopt_btn = QPushButton("Pre-optimize Structure")
+        self.preopt_btn.setObjectName("preOptBtn")
+        self.preopt_btn.setCursor(Qt.PointingHandCursor)
+        self.preopt_btn.setToolTip(
+            "Run force-field optimisation on all molecules (required before ORCA)"
+        )
+        self.preopt_btn.clicked.connect(self._on_preoptimize_clicked)
+        btn_row.addWidget(self.preopt_btn)
+
         self.run_btn = QPushButton("Run Calculations")
         self.run_btn.setObjectName("runBtn")
         self.run_btn.setCursor(Qt.PointingHandCursor)
+        self.run_btn.setEnabled(False)
+        self.run_btn.setToolTip(
+            "All molecules must be pre-optimised before running ORCA"
+        )
         self.run_btn.clicked.connect(self._on_run_clicked)
         btn_row.addWidget(self.run_btn)
 
@@ -902,7 +1031,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(title)
 
         sub = QLabel(
-            "SMILES \u2192 Force-Field Optimisation "
+            "SMILES \u2192 ETKDG Multi-Conformer Pre-optimisation "
             "\u2192 ORCA Calculation \u2192 Excel Report"
         )
         sub.setObjectName("subtitle")
@@ -939,16 +1068,24 @@ class MainWindow(QMainWindow):
         grp = QGroupBox("Molecules")
         lay = QVBoxLayout(grp)
 
-        # Columns: Name, SMILES, Settings, Remove
-        self.mol_table = QTableWidget(0, 4)
-        self.mol_table.setHorizontalHeaderLabels(["Name", "SMILES", "Settings", ""])
+        # Columns: Name, SMILES, Pre-opt, GOAT, 3D, Settings, Remove
+        self.mol_table = QTableWidget(0, 7)
+        self.mol_table.setHorizontalHeaderLabels([
+            "Name", "SMILES", "Pre-opt", "GOAT", "3D", "Settings", "",
+        ])
         hdr = self.mol_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.Stretch)
         hdr.setSectionResizeMode(1, QHeaderView.Stretch)
         hdr.setSectionResizeMode(2, QHeaderView.Fixed)
         hdr.setSectionResizeMode(3, QHeaderView.Fixed)
-        self.mol_table.setColumnWidth(2, 60)
-        self.mol_table.setColumnWidth(3, 36)
+        hdr.setSectionResizeMode(4, QHeaderView.Fixed)
+        hdr.setSectionResizeMode(5, QHeaderView.Fixed)
+        hdr.setSectionResizeMode(6, QHeaderView.Fixed)
+        self.mol_table.setColumnWidth(2, 55)
+        self.mol_table.setColumnWidth(3, 50)
+        self.mol_table.setColumnWidth(4, 36)
+        self.mol_table.setColumnWidth(5, 60)
+        self.mol_table.setColumnWidth(6, 36)
         self.mol_table.verticalHeader().setVisible(False)
         self.mol_table.verticalHeader().setDefaultSectionSize(34)
         self.mol_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -996,6 +1133,33 @@ class MainWindow(QMainWindow):
         self.mol_table.setItem(row, 0, QTableWidgetItem(name))
         self.mol_table.setItem(row, 1, QTableWidgetItem(smiles))
 
+        # Pre-optimised checkbox (read-only indicator, green when checked)
+        preopt_cb = QCheckBox()
+        preopt_cb.setEnabled(False)
+        preopt_cb.setToolTip("Checked after pre-optimisation is complete")
+        preopt_cb.setStyleSheet(
+            "QCheckBox { background: transparent; margin-left: 16px; }"
+            "QCheckBox::indicator:checked { background-color: #22c55e; border: 1px solid #16a34a; border-radius: 2px; }"
+        )
+        self.mol_table.setCellWidget(row, 2, preopt_cb)
+
+        # GOAT conformer search checkbox (user-toggleable)
+        goat_cb = QCheckBox()
+        goat_cb.setToolTip("Run GOAT global conformer search before DFT (recommended for flexible molecules)")
+        goat_cb.setStyleSheet(
+            "QCheckBox { background: transparent; margin-left: 14px; }"
+            "QCheckBox::indicator:checked { background-color: #22c55e; border: 1px solid #16a34a; border-radius: 2px; }"
+        )
+        self.mol_table.setCellWidget(row, 3, goat_cb)
+
+        # 3D viewer button
+        view3d_btn = QPushButton("\U0001f50d")  # magnifying glass
+        view3d_btn.setObjectName("view3dBtn")
+        view3d_btn.setCursor(Qt.PointingHandCursor)
+        view3d_btn.setToolTip("Open interactive 3D viewer for this molecule")
+        view3d_btn.clicked.connect(self._on_view3d_clicked)
+        self.mol_table.setCellWidget(row, 4, view3d_btn)
+
         # Settings button — shows red X (no custom settings) by default
         settings_btn = QPushButton("\u2717")
         settings_btn.setObjectName("settingsBtn")
@@ -1003,19 +1167,19 @@ class MainWindow(QMainWindow):
         settings_btn.setCursor(Qt.PointingHandCursor)
         settings_btn.setToolTip("Click to set per-molecule settings")
         settings_btn.clicked.connect(self._on_settings_clicked)
-        self.mol_table.setCellWidget(row, 2, settings_btn)
+        self.mol_table.setCellWidget(row, 5, settings_btn)
 
         btn = QPushButton("\u00d7")
         btn.setObjectName("removeBtn")
         btn.setCursor(Qt.PointingHandCursor)
         btn.clicked.connect(self._on_remove_clicked)
-        self.mol_table.setCellWidget(row, 3, btn)
+        self.mol_table.setCellWidget(row, 6, btn)
 
         self._updating = False
 
     def _update_settings_indicator(self, row: int):
         """Update the settings button icon for a given row."""
-        btn = self.mol_table.cellWidget(row, 2)
+        btn = self.mol_table.cellWidget(row, 5)
         if not btn:
             return
         if self._mol_settings.get(row) is not None:
@@ -1032,6 +1196,10 @@ class MainWindow(QMainWindow):
     def _on_cell_changed(self, row: int, col: int):
         if self._updating:
             return
+        if col == 1:  # SMILES changed → invalidate pre-optimisation
+            self._mol_preopt.pop(row, None)
+            self._update_preopt_checkbox(row, False)
+            self._update_run_button_state()
 
     def _on_add_clicked(self):
         self._add_mol_row()
@@ -1044,17 +1212,26 @@ class MainWindow(QMainWindow):
             return
         btn = self.sender()
         for row in range(self.mol_table.rowCount()):
-            if self.mol_table.cellWidget(row, 3) is btn:
+            if self.mol_table.cellWidget(row, 6) is btn:
                 self._mol_settings.pop(row, None)
+                self._mol_preopt.pop(row, None)
                 self.mol_table.removeRow(row)
-                # Re-index mol_settings
-                new = {}
+                # Re-index mol_settings and preopt data
+                new_settings = {}
+                new_preopt = {}
                 for k, v in self._mol_settings.items():
                     if k > row:
-                        new[k - 1] = v
+                        new_settings[k - 1] = v
                     elif k < row:
-                        new[k] = v
-                self._mol_settings = new
+                        new_settings[k] = v
+                for k, v in self._mol_preopt.items():
+                    if k > row:
+                        new_preopt[k - 1] = v
+                    elif k < row:
+                        new_preopt[k] = v
+                self._mol_settings = new_settings
+                self._mol_preopt = new_preopt
+                self._update_run_button_state()
                 return
 
     def _on_bulk_clicked(self):
@@ -1071,8 +1248,10 @@ class MainWindow(QMainWindow):
                     not (i1 and i1.text().strip())):
                 self.mol_table.removeRow(0)
                 self._mol_settings.clear()
+                self._mol_preopt.clear()
         for name, smiles in molecules:
             self._add_mol_row(name, smiles)
+        self._update_run_button_state()
 
     def _on_add_to_queue_clicked(self):
         """Submit new (un-queued) molecule rows to the running worker."""
@@ -1143,7 +1322,7 @@ class MainWindow(QMainWindow):
         """Open per-molecule settings dialog."""
         btn = self.sender()
         for row in range(self.mol_table.rowCount()):
-            if self.mol_table.cellWidget(row, 2) is btn:
+            if self.mol_table.cellWidget(row, 5) is btn:
                 name_item = self.mol_table.item(row, 0)
                 mol_name = (name_item.text() if name_item else "").strip() or f"mol_{row+1}"
 
@@ -1156,7 +1335,178 @@ class MainWindow(QMainWindow):
                 if dlg.exec() == QDialog.Accepted:
                     self._mol_settings[row] = dlg.get_settings()
                     self._update_settings_indicator(row)
+                    self._update_run_button_state()
                 return
+
+    # -- 3D Viewer integration --
+
+    def _on_view3d_clicked(self):
+        """Open the 3D viewer for the molecule in the clicked row."""
+        if not HAS_3D_VIEWER or self.viewer_3d is None:
+            QMessageBox.warning(
+                self, "3D Viewer Unavailable",
+                "The 3D viewer requires pyqtgraph and PyOpenGL.\n"
+                "Install with:  pip install pyqtgraph PyOpenGL numpy",
+            )
+            return
+
+        btn = self.sender()
+        for row in range(self.mol_table.rowCount()):
+            if self.mol_table.cellWidget(row, 4) is btn:
+                i1 = self.mol_table.item(row, 1)
+                smiles = (i1.text() if i1 else "").strip()
+                if not smiles:
+                    QMessageBox.warning(self, "No SMILES", "Enter a SMILES string first.")
+                    return
+                if not validate_smiles(smiles):
+                    QMessageBox.warning(self, "Invalid SMILES", f"Invalid SMILES: {smiles}")
+                    return
+
+                name_item = self.mol_table.item(row, 0)
+                name = (name_item.text() if name_item else "").strip() or f"mol_{row + 1}"
+
+                # Get or create mol_3d
+                pre = self._mol_preopt.get(row)
+                if pre and pre.get("mol_3d") is not None:
+                    mol_3d = pre["mol_3d"]
+                else:
+                    try:
+                        mol_3d, png_bytes, _ = smiles_to_mol3d(smiles)
+                        self._mol_preopt[row] = {
+                            "mol_3d": mol_3d,
+                            "xyz_block": mol_to_xyz_block(mol_3d),
+                            "png_bytes": png_bytes,
+                        }
+                    except Exception as exc:
+                        QMessageBox.critical(
+                            self, "3D Embedding Failed", str(exc)
+                        )
+                        return
+
+                self._viewing_3d_row = row
+                self.viewer_3d.load_molecule(mol_3d, smiles=smiles, name=name)
+                self.right_stack.setCurrentWidget(self.viewer_3d)
+                return
+
+    def _on_3d_viewer_closed(self):
+        """Return from 3D viewer to settings panel."""
+        row = self._viewing_3d_row
+        if row >= 0 and self.viewer_3d is not None:
+            # Save updated coordinates back
+            pre = self._mol_preopt.get(row, {})
+            if self.viewer_3d.mol_3d is not None:
+                pre["mol_3d"] = self.viewer_3d.mol_3d
+                pre["xyz_block"] = self.viewer_3d.get_xyz_block()
+                self._mol_preopt[row] = pre
+        self._viewing_3d_row = -1
+        self.right_stack.setCurrentWidget(self.settings_panel)
+
+    def _on_3d_preopt_done(self):
+        """Force-field optimisation completed in the 3D viewer."""
+        row = self._viewing_3d_row
+        if row >= 0 and self.viewer_3d is not None and self.viewer_3d.mol_3d is not None:
+            pre = self._mol_preopt.get(row, {})
+            pre["mol_3d"] = self.viewer_3d.mol_3d
+            pre["xyz_block"] = self.viewer_3d.get_xyz_block()
+            self._mol_preopt[row] = pre
+            self._update_preopt_checkbox(row, True)
+            self._update_run_button_state()
+
+    def _update_preopt_checkbox(self, row: int, checked: bool):
+        """Set the pre-optimised checkbox for a row."""
+        cb = self.mol_table.cellWidget(row, 2)
+        if isinstance(cb, QCheckBox):
+            cb.setEnabled(True)
+            cb.setChecked(checked)
+            cb.setEnabled(False)
+
+    def _update_run_button_state(self):
+        """Enable Run only when every molecule is pre-optimised and has settings applied."""
+        if self.worker and self.worker.isRunning():
+            return  # don't change state while running
+
+        all_preopt = True
+        all_settings = True
+        any_mol = False
+        for row in range(self.mol_table.rowCount()):
+            i1 = self.mol_table.item(row, 1)
+            smiles = (i1.text() if i1 else "").strip()
+            if not smiles:
+                continue
+            any_mol = True
+            if row not in self._mol_preopt:
+                all_preopt = False
+            if self._mol_settings.get(row) is None:
+                all_settings = False
+
+        enabled = any_mol and all_preopt and all_settings
+        self.run_btn.setEnabled(enabled)
+        if enabled:
+            self.run_btn.setToolTip("")
+        elif not all_preopt:
+            self.run_btn.setToolTip(
+                "All molecules must be pre-optimised before running ORCA"
+            )
+        elif not all_settings:
+            self.run_btn.setToolTip(
+                "All molecules must have settings applied (use 'Apply Settings to All Tests')"
+            )
+
+    def _on_preoptimize_clicked(self):
+        """Batch pre-optimise all molecules that haven't been done yet."""
+        errors = []
+        count = 0
+
+        for row in range(self.mol_table.rowCount()):
+            if row in self._mol_preopt:
+                continue  # already done
+
+            i1 = self.mol_table.item(row, 1)
+            smiles = (i1.text() if i1 else "").strip()
+            if not smiles:
+                continue
+            if not validate_smiles(smiles):
+                name_item = self.mol_table.item(row, 0)
+                name = (name_item.text() if name_item else "").strip() or f"mol_{row + 1}"
+                errors.append(f"{name}: invalid SMILES")
+                continue
+
+            try:
+                mol_3d, png_bytes, _ = smiles_to_mol3d(smiles)
+                ff_optimize_mol(mol_3d)
+                xyz_block = mol_to_xyz_block(mol_3d)
+                self._mol_preopt[row] = {
+                    "mol_3d": mol_3d,
+                    "xyz_block": xyz_block,
+                    "png_bytes": png_bytes,
+                }
+                self._update_preopt_checkbox(row, True)
+                count += 1
+            except Exception as exc:
+                name_item = self.mol_table.item(row, 0)
+                name = (name_item.text() if name_item else "").strip() or f"mol_{row + 1}"
+                errors.append(f"{name}: {exc}")
+
+            QApplication.processEvents()
+
+        self._update_run_button_state()
+
+        if errors:
+            QMessageBox.warning(
+                self, "Pre-optimisation Errors",
+                f"Completed {count} molecule(s).\n\nErrors:\n" + "\n".join(errors),
+            )
+        elif count > 0:
+            QMessageBox.information(
+                self, "Pre-optimisation Complete",
+                f"Successfully pre-optimised {count} molecule(s).\n"
+                "You can now inspect them with the 3D viewer or run calculations.",
+            )
+        else:
+            QMessageBox.information(
+                self, "Nothing to Do",
+                "All molecules are already pre-optimised.",
+            )
 
     # -- Settings panel --
 
@@ -1168,7 +1518,7 @@ class MainWindow(QMainWindow):
 
         # ── Preset ──
         g.addWidget(_form_label("Preset"), row, 0)
-        self.preset_combo = QComboBox()
+        self.preset_combo = NoScrollComboBox()
         self.preset_combo.addItems(list(PRESETS.keys()))
         self.preset_combo.currentTextChanged.connect(self._on_preset_changed)
         g.addWidget(self.preset_combo, row, 1)
@@ -1222,7 +1572,7 @@ class MainWindow(QMainWindow):
         # ── Functional ──
         row += 1
         g.addWidget(_form_label("Functional"), row, 0)
-        self.func_combo = QComboBox()
+        self.func_combo = NoScrollComboBox()
         self.func_combo.setEditable(True)
         self.func_combo.addItems([
             "B3LYP", "PBE", "PBE0", "M06-2X", "wB97X-D3",
@@ -1235,7 +1585,7 @@ class MainWindow(QMainWindow):
         # ── Basis Set ──
         row += 1
         g.addWidget(_form_label("Basis Set"), row, 0)
-        self.basis_combo = QComboBox()
+        self.basis_combo = NoScrollComboBox()
         self.basis_combo.setEditable(True)
         self.basis_combo.addItems([
             "def2-SVP", "def2-TZVP", "def2-TZVPP", "def2-QZVPP",
@@ -1248,7 +1598,7 @@ class MainWindow(QMainWindow):
         # ── Calculation Type ──
         row += 1
         g.addWidget(_form_label("Calculation Type"), row, 0)
-        self.calc_combo = QComboBox()
+        self.calc_combo = NoScrollComboBox()
         for label, value in [
             ("Optimisation + Frequency", "OPT FREQ"),
             ("Geometry Optimisation", "OPT"),
@@ -1256,6 +1606,7 @@ class MainWindow(QMainWindow):
             ("Single Point Energy", "SP"),
             ("TS Optimisation + Frequency", "OPTTS FREQ"),
             ("TS Optimisation", "OPTTS"),
+            ("Manual (none)", ""),
         ]:
             self.calc_combo.addItem(label, value)
         self.calc_combo.currentIndexChanged.connect(self._on_setting_changed)
@@ -1322,6 +1673,24 @@ class MainWindow(QMainWindow):
         apply_all_btn.clicked.connect(self._apply_settings_to_all)
         g.addWidget(apply_all_btn, row, 0, 1, 4)
 
+        # ── Input File Preview ──
+        row += 1
+        sep2 = QFrame()
+        sep2.setObjectName("separator")
+        sep2.setFrameShape(QFrame.HLine)
+        g.addWidget(sep2, row, 0, 1, 4)
+
+        row += 1
+        preview_lbl = _form_label("Input File Preview  (editable)")
+        g.addWidget(preview_lbl, row, 0, 1, 4)
+
+        row += 1
+        self.inp_preview = QPlainTextEdit()
+        self.inp_preview.setPlaceholderText("Input file preview will appear here...")
+        self.inp_preview.setMinimumHeight(200)
+        self.inp_preview.textChanged.connect(self._on_preview_edited)
+        g.addWidget(self.inp_preview, row, 0, 1, 4)
+
         return grp
 
     # -- Preset handling --
@@ -1349,15 +1718,17 @@ class MainWindow(QMainWindow):
             self._preset_nprocs_group = preset.get("nprocs_group")
         finally:
             self._applying_preset = False
+        self._update_preview()
 
     def _on_setting_changed(self):
-        if self._applying_preset:
+        if self._applying_preset or self._updating_from_preview:
             return
         self._preset_nprocs_group = None
         self.preset_combo.blockSignals(True)
         self.preset_combo.setCurrentText("Custom")
         self.preset_combo.blockSignals(False)
         self._update_delete_btn()
+        self._update_preview()
 
     def _update_delete_btn(self):
         """Enable Delete for any non-Custom preset (including built-ins)."""
@@ -1391,7 +1762,7 @@ class MainWindow(QMainWindow):
         preset_data = {
             "functional": self.func_combo.currentText().strip(),
             "basis_set": self.basis_combo.currentText().strip(),
-            "calc_type": self.calc_combo.currentData() or "OPT FREQ",
+            "calc_type": self.calc_combo.currentData() if self.calc_combo.currentData() is not None else "OPT FREQ",
             "extra_keywords": self.extra_kw.text().strip(),
             "charge": self.charge_spin.value(),
             "multiplicity": self.mult_spin.value(),
@@ -1456,6 +1827,175 @@ class MainWindow(QMainWindow):
         for row in range(self.mol_table.rowCount()):
             self._mol_settings[row] = copy.deepcopy(settings)
             self._update_settings_indicator(row)
+        self._update_run_button_state()
+
+    # -- Input file preview (bidirectional sync) --
+
+    def _generate_preview_text(self) -> str:
+        """Build an ORCA .inp preview from the current global settings."""
+        settings = self._collect_global_settings()
+        functional = settings.get("functional", "B3LYP")
+        basis_set = settings.get("basis_set", "def2-SVP")
+        calc_type = settings.get("calc_type", "OPT FREQ")
+        charge = settings.get("charge", 0)
+        multiplicity = settings.get("multiplicity", 1)
+        ram_mb = settings.get("ram_mb", 4000)
+        cpus = settings.get("cpus", 4)
+        extra_keywords = settings.get("extra_keywords", "").strip()
+        extra_blocks = settings.get("extra_blocks", "").strip()
+        nprocs_group = settings.get("nprocs_group")
+
+        keyword_line = f"! {functional} {basis_set} {calc_type}".rstrip()
+        if extra_keywords:
+            keyword_line += f" {extra_keywords}"
+
+        parts = [
+            keyword_line,
+            "",
+            f"%maxcore {ram_mb}",
+            "%pal",
+            f"  nprocs {cpus}",
+        ]
+        if nprocs_group is not None:
+            parts.append(f"  nprocs_group {nprocs_group}")
+        parts.append("end")
+
+        if extra_blocks:
+            parts += ["", extra_blocks]
+
+        parts += [
+            "",
+            f"* xyz {charge} {multiplicity}",
+            "  # Coordinates will be generated from SMILES",
+            "*",
+            "",
+        ]
+        return "\n".join(parts)
+
+    def _update_preview(self):
+        """Regenerate the preview from widget values (settings → preview)."""
+        if self._updating_from_preview:
+            return
+        self._updating_preview = True
+        try:
+            text = self._generate_preview_text()
+            self.inp_preview.setPlainText(text)
+        finally:
+            self._updating_preview = False
+
+    def _on_preview_edited(self):
+        """Called when the user types in the preview box (preview → settings)."""
+        if self._updating_preview:
+            return
+        self._updating_from_preview = True
+        try:
+            self._parse_preview_to_settings()
+        finally:
+            self._updating_from_preview = False
+
+    def _parse_preview_to_settings(self):
+        """Parse the preview text and push values back into the setting widgets."""
+        text = self.inp_preview.toPlainText()
+        lines = text.split("\n")
+
+        keyword_line = ""
+        maxcore = None
+        nprocs = None
+        nprocs_group = None
+        charge = 0
+        multiplicity = 1
+        extra_blocks_lines: list[str] = []
+
+        in_pal = False
+        after_pal = False
+
+        for line in lines:
+            stripped = line.strip()
+
+            if stripped.startswith("!"):
+                keyword_line = stripped[1:].strip()
+            elif stripped.lower().startswith("%maxcore"):
+                m = re.match(r"(?i)%maxcore\s+(\d+)", stripped)
+                if m:
+                    maxcore = int(m.group(1))
+            elif stripped.lower().startswith("%pal"):
+                in_pal = True
+            elif in_pal:
+                if stripped.lower() == "end":
+                    in_pal = False
+                    after_pal = True
+                else:
+                    m = re.match(r"nprocs_group\s+(\d+)", stripped, re.IGNORECASE)
+                    if m:
+                        nprocs_group = int(m.group(1))
+                    else:
+                        m = re.match(r"nprocs\s+(\d+)", stripped, re.IGNORECASE)
+                        if m:
+                            nprocs = int(m.group(1))
+            elif stripped.startswith("* xyz") or stripped.startswith("*xyz"):
+                parts = stripped.split()
+                if len(parts) >= 4:
+                    try:
+                        charge = int(parts[2])
+                    except ValueError:
+                        pass
+                    try:
+                        multiplicity = int(parts[3])
+                    except ValueError:
+                        pass
+                break
+            elif after_pal and stripped and not stripped.startswith("#"):
+                extra_blocks_lines.append(line.rstrip())
+
+        # --- Parse keyword line into functional, basis_set, calc_type, extra ---
+        CALC_TOKENS = {"OPT", "FREQ", "SP", "OPTTS"}
+
+        functional = ""
+        basis_set = ""
+        calc_type_tokens: list[str] = []
+        extra_kw_tokens: list[str] = []
+
+        if keyword_line:
+            tokens = keyword_line.split()
+            for i, tok in enumerate(tokens):
+                tok_upper = tok.upper()
+                if i == 0:
+                    functional = tok
+                elif tok_upper in CALC_TOKENS:
+                    calc_type_tokens.append(tok_upper)
+                elif not basis_set and i == 1:
+                    basis_set = tok
+                else:
+                    extra_kw_tokens.append(tok)
+
+        # --- Push values into widgets ---
+        self.func_combo.setCurrentText(functional)
+        self.basis_combo.setCurrentText(basis_set)
+
+        calc_type_str = " ".join(calc_type_tokens) if calc_type_tokens else ""
+        idx = self.calc_combo.findData(calc_type_str)
+        if idx >= 0:
+            self.calc_combo.setCurrentIndex(idx)
+
+        self.extra_kw.setText(" ".join(extra_kw_tokens))
+
+        if maxcore is not None:
+            self.ram_spin.setValue(maxcore)
+        if nprocs is not None:
+            self.cpus_spin.setValue(nprocs)
+
+        self.charge_spin.setValue(charge)
+        self.mult_spin.setValue(multiplicity)
+        self._preset_nprocs_group = nprocs_group
+
+        extra_blocks_text = "\n".join(extra_blocks_lines).strip()
+        self.extra_blocks.setPlainText(extra_blocks_text)
+
+        # Switch to Custom preset since user edited manually
+        self.preset_combo.blockSignals(True)
+        self.preset_combo.setCurrentText("Custom")
+        self.preset_combo.blockSignals(False)
+        self._update_delete_btn()
 
     # -- Path browsers --
 
@@ -1582,6 +2122,7 @@ class MainWindow(QMainWindow):
             self._update_delete_btn()
         finally:
             self._applying_preset = False
+            self._update_preview()
 
     def _save_config(self):
         self.config = {
@@ -1590,7 +2131,7 @@ class MainWindow(QMainWindow):
             "preset": self.preset_combo.currentText(),
             "functional": self.func_combo.currentText().strip(),
             "basis_set": self.basis_combo.currentText().strip(),
-            "calc_type": self.calc_combo.currentData() or "OPT FREQ",
+            "calc_type": self.calc_combo.currentData() if self.calc_combo.currentData() is not None else "OPT FREQ",
             "charge": self.charge_spin.value(),
             "multiplicity": self.mult_spin.value(),
             "ram_mb": self.ram_spin.value(),
@@ -1608,7 +2149,7 @@ class MainWindow(QMainWindow):
         settings = {
             "functional": self.func_combo.currentText().strip(),
             "basis_set": self.basis_combo.currentText().strip(),
-            "calc_type": self.calc_combo.currentData() or "OPT FREQ",
+            "calc_type": self.calc_combo.currentData() if self.calc_combo.currentData() is not None else "OPT FREQ",
             "charge": self.charge_spin.value(),
             "multiplicity": self.mult_spin.value(),
             "ram_mb": self.ram_spin.value(),
@@ -1620,10 +2161,11 @@ class MainWindow(QMainWindow):
             settings["nprocs_group"] = self._preset_nprocs_group
         return settings
 
-    def _collect_data(self) -> tuple[list[dict], dict, dict]:
-        """Return (molecules, global_settings, per_mol_settings)."""
+    def _collect_data(self) -> tuple[list[dict], dict, dict, dict]:
+        """Return (molecules, global_settings, per_mol_settings, preopt_by_name)."""
         molecules = []
         mol_settings_by_name: dict[str, dict] = {}
+        preopt_by_name: dict[str, dict] = {}
 
         for row in range(self.mol_table.rowCount()):
             i0 = self.mol_table.item(row, 0)
@@ -1632,19 +2174,28 @@ class MainWindow(QMainWindow):
             smiles = (i1.text() if i1 else "").strip()
             if smiles:
                 name = _sanitize_name(name_text or f"mol_{row + 1}")
-                molecules.append({"name": name, "smiles": smiles})
+                goat_cb = self.mol_table.cellWidget(row, 3)
+                goat_on = goat_cb.isChecked() if isinstance(goat_cb, QCheckBox) else False
+                molecules.append({"name": name, "smiles": smiles, "goat": goat_on})
 
                 per_mol = self._mol_settings.get(row)
                 if per_mol is not None:
                     mol_settings_by_name[name] = per_mol
 
+                pre = self._mol_preopt.get(row)
+                if pre and "xyz_block" in pre and "png_bytes" in pre:
+                    preopt_by_name[name] = {
+                        "xyz_block": pre["xyz_block"],
+                        "png_bytes": pre["png_bytes"],
+                    }
+
         global_settings = self._collect_global_settings()
-        return molecules, global_settings, mol_settings_by_name
+        return molecules, global_settings, mol_settings_by_name, preopt_by_name
 
     # ── Run pipeline ─────────────────────────────────────────────
 
     def _on_run_clicked(self):
-        molecules, global_settings, mol_settings = self._collect_data()
+        molecules, global_settings, mol_settings, preopt_data = self._collect_data()
 
         if not molecules:
             QMessageBox.warning(
@@ -1681,6 +2232,7 @@ class MainWindow(QMainWindow):
         self._queued_count = self.mol_table.rowCount()
         self.run_btn.setEnabled(False)
         self.run_btn.setText("Running\u2026")
+        self.preopt_btn.setEnabled(False)
         self.stop_btn.setVisible(True)
         self.queue_btn.setVisible(True)
         self.results_group.setVisible(False)
@@ -1725,6 +2277,7 @@ class MainWindow(QMainWindow):
             orca_path=orca_path,
             project_dir=project_dir,
             abort_event=self.abort_event,
+            preopt_data=preopt_data,
         )
         self.worker.finished.connect(self._on_pipeline_finished)
         self.worker.start()
@@ -1766,6 +2319,7 @@ class MainWindow(QMainWindow):
         phase_formats = {
             "starting":  "Initializing...",
             "geometry":  f"Generating 3D Coordinates for {name}...  {pct}%",
+            "goat":      f"Running GOAT Conformer Search for {name}...  {pct}%",
             "orca":      f"Executing ORCA Calculation for {name}...  {pct}%",
             "report":    "Building Excel Report...",
             "done":      "Complete!",
@@ -1783,7 +2337,8 @@ class MainWindow(QMainWindow):
         # Per-molecule status list
         status_colors = {
             "pending": "#64748b", "generating": "#3b82f6",
-            "generated": "#22c55e", "running": "#3b82f6",
+            "generated": "#22c55e", "goat": "#8b5cf6",
+            "running": "#3b82f6",
             "completed": "#22c55e", "warning": "#f59e0b",
             "error": "#ef4444", "aborted": "#f59e0b",
         }
@@ -1813,7 +2368,7 @@ class MainWindow(QMainWindow):
                 )
             elif m["status"] == "generating":
                 parts.append(
-                    ' <span style="color:#3b82f6;">RDKit Force Field\u2026</span>'
+                    ' <span style="color:#3b82f6;">RDKit ETKDG\u2026</span>'
                 )
             lines.append("".join(parts))
 
@@ -1831,13 +2386,14 @@ class MainWindow(QMainWindow):
         # Allow system sleep again
         _allow_sleep()
 
-        self.run_btn.setEnabled(True)
         self.run_btn.setText("Run Calculations")
+        self.preopt_btn.setEnabled(True)
         self.stop_btn.setVisible(False)
         self.stop_btn.setEnabled(True)
         self.stop_btn.setText("Stop Calculation")
         self.queue_btn.setVisible(False)
         self.setWindowTitle("ORCA Workflow Manager")
+        self._update_run_button_state()
 
         job = self.job_status
         if not job:

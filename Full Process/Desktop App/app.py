@@ -39,6 +39,7 @@ from pipeline import (
     parse_out_file,
     build_report,
     fmt_hhmmss,
+    run_goat_job,
 )
 
 app = Flask(__name__)
@@ -193,6 +194,7 @@ def _run_pipeline(job_id: str, molecules: list[dict], settings: dict):
         image_map: dict[str, str] = {}
         smiles_map: dict[str, str] = {}
         inp_paths: dict[str, Path] = {}
+        xyz_blocks: dict[str, str] = {}
 
         # --- Phase 1: generate geometries + input files ---
         job["phase"] = "geometry"
@@ -206,6 +208,7 @@ def _run_pipeline(job_id: str, molecules: list[dict], settings: dict):
 
             try:
                 xyz_block, png_bytes, _ = smiles_to_xyz(smiles)
+                xyz_blocks[name] = xyz_block
                 inp_content = generate_inp(name, xyz_block, settings)
 
                 inp_path = INP_DIR / f"{name}.inp"
@@ -223,6 +226,50 @@ def _run_pipeline(job_id: str, molecules: list[dict], settings: dict):
             except Exception as exc:
                 job["molecules"][i]["status"] = "error"
                 job["molecules"][i]["error"] = str(exc)
+
+        # --- Phase 1.5: GOAT conformer search (per-molecule) ---
+        env = os.environ.copy()
+        for i, mol_data in enumerate(molecules):
+            if not mol_data.get("goat", False):
+                continue
+
+            name = _sanitize_name(mol_data.get("name") or f"mol_{i + 1}")
+
+            if job["molecules"][i]["status"] == "error":
+                continue
+            if name not in inp_paths:
+                continue
+
+            job["phase"] = "goat"
+            job["current"] = i + 1
+            job["current_name"] = name
+            job["elapsed"] = fmt_hhmmss(time.time() - start_time)
+            job["molecules"][i]["status"] = "goat"
+
+            mol_out_dir = out_run_dir / name
+            mol_out_dir.mkdir(parents=True, exist_ok=True)
+
+            goat_xyz, goat_warn = run_goat_job(
+                name,
+                xyz_blocks[name],
+                settings,
+                job_dir=mol_out_dir,
+                env=env,
+                status_dict=job,
+                pipeline_start=start_time,
+            )
+            job["elapsed"] = fmt_hhmmss(time.time() - start_time)
+
+            if goat_xyz is not None:
+                # Rebuild the DFT input with GOAT geometry
+                inp_content = generate_inp(name, goat_xyz, settings)
+                inp_path = INP_DIR / f"{name}.inp"
+                inp_path.write_text(inp_content, encoding="utf-8")
+                inp_paths[name] = inp_path
+                job["molecules"][i]["status"] = "generated"
+            elif goat_warn:
+                job["molecules"][i]["error"] = goat_warn
+                job["molecules"][i]["status"] = "generated"
 
         # --- Phase 2: run ORCA jobs ---
         job["phase"] = "orca"
